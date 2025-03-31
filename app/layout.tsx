@@ -12,7 +12,6 @@ export const metadata = {
   title: "아니 그래서 언제 만날건데",
   description: "여러명이 약속에 참석할 수 있는 되는 시간을 설정하고 최종적으로 만날 수 있는 시간을 확정합니다",
   viewport: "width=device-width, initial-scale=1, maximum-scale=1",
-    generator: 'v0.dev'
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -34,6 +33,3 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   )
 }
 
-
-
-import './globals.css'
