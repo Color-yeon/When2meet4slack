@@ -1,118 +1,63 @@
 import { Redis } from "@upstash/redis"
 
-// Redis 클라이언트 싱글톤 인스턴스
-let redisInstance: Redis | null = null
+// Redis 클라이언트 인스턴스
+let redisClient: Redis | null = null
 
-// 연결 상태 캐싱
-let isConnectedCache: boolean | null = null
-let lastConnectionCheck = 0
-const CONNECTION_CACHE_TTL = 60000 // 1분
-
-// Redis 클라이언트 초기화 함수
-export function getRedisClient(): Redis {
-  if (!redisInstance) {
-    // 여러 가능한 환경 변수 이름 확인
-    const url = process.env.UPSTASH_REDIS_URL || process.env.REDIS_URL || process.env.KV_URL || ""
-    const token = process.env.UPSTASH_REDIS_TOKEN || process.env.KV_REST_API_TOKEN || ""
-
-    if (!url || !token) {
-      throw new Error("Redis 환경 변수가 설정되지 않았습니다")
-    }
-
+// Redis 클라이언트 가져오기 (싱글톤 패턴)
+export function getRedisClient() {
+  if (!redisClient) {
     try {
-      redisInstance = new Redis({
+      // 환경 변수 확인
+      const url = process.env.UPSTASH_REDIS_URL || process.env.REDIS_URL || process.env.KV_URL
+      const token =
+        process.env.UPSTASH_REDIS_TOKEN || process.env.KV_REST_API_TOKEN || process.env.KV_REST_API_READ_ONLY_TOKEN
+
+      if (!url || !token) {
+        console.error("Redis 환경 변수가 설정되지 않았습니다.")
+        throw new Error("Redis 환경 변수가 필요합니다")
+      }
+
+      // Redis 클라이언트 초기화
+      redisClient = new Redis({
         url,
         token,
-        retry: {
-          retries: 3,
-          backoff: (retryCount) => Math.min(Math.exp(retryCount) * 50, 1000),
-        },
-        automaticDeserialization: false, // 자동 역직렬화 비활성화로 성능 향상
       })
+
+      console.log("Redis 클라이언트가 초기화되었습니다.")
     } catch (error) {
       console.error("Redis 클라이언트 초기화 오류:", error)
-      throw new Error("Redis 클라이언트를 초기화할 수 없습니다")
+      throw error
     }
   }
 
-  return redisInstance
+  return redisClient
 }
 
-// Redis 연결 확인 함수 (캐싱 적용)
+// Redis 연결 확인
 export async function checkRedisConnection(): Promise<boolean> {
-  const now = Date.now()
-
-  // 캐시된 연결 상태가 있고 TTL이 만료되지 않았으면 캐시된 값 반환
-  if (isConnectedCache !== null && now - lastConnectionCheck < CONNECTION_CACHE_TTL) {
-    return isConnectedCache
-  }
-
   try {
     const redis = getRedisClient()
-    const pong = await redis.ping()
-    isConnectedCache = pong === "PONG"
-    lastConnectionCheck = now
-    return isConnectedCache
+    // 간단한 PING 명령으로 연결 확인
+    const result = await redis.ping()
+    return result === "PONG"
   } catch (error) {
     console.error("Redis 연결 확인 오류:", error)
-    isConnectedCache = false
-    lastConnectionCheck = now
     return false
   }
 }
 
-// 결과 캐싱을 위한 맵
-const redisDataCache = new Map<string, { data: any; timestamp: number }>()
-const REDIS_CACHE_TTL = 30000 // 30초
-const REDIS_CACHE_MAX_SIZE = 200
-
-// 안전한 Redis 데이터 가져오기 함수 (캐싱 적용)
-export async function safeGetRedisData(key: string, skipCache = false): Promise<any> {
-  const now = Date.now()
-
-  // 캐시 확인 (skipCache가 false이고 캐시가 유효한 경우)
-  if (!skipCache && redisDataCache.has(key)) {
-    const cached = redisDataCache.get(key)!
-    if (now - cached.timestamp < REDIS_CACHE_TTL) {
-      return cached.data
-    }
-  }
-
+// Redis 데이터 안전하게 가져오기
+export async function safeGetRedisData(key: string): Promise<any> {
   try {
     const redis = getRedisClient()
-    const data = await redis.get(key)
-
-    // 캐시에 저장
-    if (!skipCache) {
-      // 캐시 크기 제한
-      if (redisDataCache.size >= REDIS_CACHE_MAX_SIZE) {
-        // 가장 오래된 항목 제거
-        let oldestKey = null
-        let oldestTime = Number.POSITIVE_INFINITY
-
-        for (const [cacheKey, entry] of redisDataCache.entries()) {
-          if (entry.timestamp < oldestTime) {
-            oldestTime = entry.timestamp
-            oldestKey = cacheKey
-          }
-        }
-
-        if (oldestKey) {
-          redisDataCache.delete(oldestKey)
-        }
-      }
-
-      redisDataCache.set(key, { data, timestamp: now })
-    }
-
-    return data
+    return await redis.get(key)
   } catch (error) {
     console.error(`Redis 데이터 가져오기 오류 (${key}):`, error)
-    throw error
+    return null // 오류 발생 시 null 반환
   }
 }
 
-// 안전한 Redis 데이터 파싱 함수
+// Redis 데이터 안전하게 파싱하기
 export function parseRedisData(data: any): any {
   if (!data) return null
 
@@ -126,22 +71,40 @@ export function parseRedisData(data: any): any {
     }
   } catch (error) {
     console.error("Redis 데이터 파싱 오류:", error)
-    return null
+    return null // 오류 발생 시 null 반환
   }
 }
 
-// 배치 작업 처리 함수
+// Redis 작업 일괄 처리
 export async function batchRedisOperations(operations: (() => Promise<any>)[]): Promise<any[]> {
-  return Promise.all(
-    operations.map((op) =>
-      op().catch((err) => {
-        console.error("배치 작업 오류:", err)
-        return null
-      }),
-    ),
-  )
+  try {
+    return await Promise.all(
+      operations.map((op) =>
+        op().catch((err) => {
+          console.error("배치 작업 오류:", err)
+          return null
+        }),
+      ),
+    )
+  } catch (error) {
+    console.error("Redis 일괄 작업 오류:", error)
+    return operations.map(() => null) // 오류 발생 시 null 배열 반환
+  }
 }
 
 // 기존 코드와의 호환성을 위해 redis 인스턴스 직접 내보내기
-export const redis = getRedisClient()
+export const redis = (() => {
+  try {
+    return getRedisClient()
+  } catch (error) {
+    console.error("Redis 인스턴스 생성 오류:", error)
+    // 더미 Redis 객체 반환 (모든 메서드가 오류를 반환)
+    return {
+      get: async () => null,
+      set: async () => null,
+      del: async () => null,
+      ping: async () => null,
+    } as unknown as Redis
+  }
+})()
 

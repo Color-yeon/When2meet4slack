@@ -26,42 +26,94 @@ app.command("/약속생성", async ({ command, ack, client, body }) => {
   await ack()
 
   try {
-    // 모달 대신 메시지로 안내
-    await client.chat.postMessage({
-      channel: body.user_id,
-      text: "약속 생성을 시작합니다",
-      blocks: [
-        {
-          type: "section",
-          text: {
-            type: "mrkdwn",
-            text: "*새 약속 만들기*\n약속 제목을 입력해주세요:",
-          },
+    // 약속 생성 모달 열기
+    await client.views.open({
+      trigger_id: body.trigger_id,
+      view: {
+        type: "modal",
+        callback_id: "create_event_modal",
+        title: {
+          type: "plain_text",
+          text: "새 약속 만들기",
         },
-        {
-          type: "actions",
-          elements: [
-            {
-              type: "button",
-              text: {
+        blocks: [
+          {
+            type: "input",
+            block_id: "title_block",
+            element: {
+              type: "plain_text_input",
+              action_id: "title_input",
+              placeholder: {
                 type: "plain_text",
-                text: "약속 만들기",
+                text: "예: 팀 회의, 친구 모임 등",
               },
-              action_id: "start_create_event",
-              value: "start_create",
             },
-          ],
+            label: {
+              type: "plain_text",
+              text: "약속 제목",
+            },
+          },
+          {
+            type: "input",
+            block_id: "description_block",
+            element: {
+              type: "plain_text_input",
+              action_id: "description_input",
+              multiline: true,
+              placeholder: {
+                type: "plain_text",
+                text: "약속에 대한 추가 정보를 입력하세요",
+              },
+            },
+            label: {
+              type: "plain_text",
+              text: "약속 설명 (선택사항)",
+            },
+            optional: true,
+          },
+          {
+            type: "input",
+            block_id: "start_date_block",
+            element: {
+              type: "datepicker",
+              action_id: "start_date_input",
+              initial_date: new Date().toISOString().split("T")[0],
+              placeholder: {
+                type: "plain_text",
+                text: "시작일 선택",
+              },
+            },
+            label: {
+              type: "plain_text",
+              text: "시작일",
+            },
+          },
+          {
+            type: "input",
+            block_id: "end_date_block",
+            element: {
+              type: "datepicker",
+              action_id: "end_date_input",
+              initial_date: new Date().toISOString().split("T")[0],
+              placeholder: {
+                type: "plain_text",
+                text: "종료일 선택",
+              },
+            },
+            label: {
+              type: "plain_text",
+              text: "종료일",
+            },
+          },
+        ],
+        submit: {
+          type: "plain_text",
+          text: "약속 생성하기",
         },
-      ],
+      },
     })
   } catch (error) {
-    console.error("약속 생성 메시지 오류:", error)
-
-    // 오류 메시지 전송
-    await client.chat.postMessage({
-      channel: body.user_id,
-      text: "약속 생성 중 오류가 발생했습니다. 다시 시도해주세요.",
-    })
+    console.error("약속 생성 모달 오류:", error)
   }
 })
 
@@ -888,7 +940,7 @@ app.view("confirm_event_modal", async ({ ack, body, view, client }) => {
 })
 
 // 슬래시 명령어: /내약속
-app.command("/약속확인", async ({ command, ack, client, body }) => {
+app.command("/내약속", async ({ command, ack, client, body }) => {
   await ack()
 
   try {
@@ -1215,7 +1267,7 @@ app.command("/약속도움말", async ({ command, ack, client, body }) => {
           type: "section",
           text: {
             type: "mrkdwn",
-            text: "• `/약속생성` - 새로운 약속을 만듭니다.\n• `/약속확인` - 내가 참여 중인 약속 목록을 확인합니다.\n• `/약속도움말` - 이 도움말을 표시합니다.",
+            text: "• `/약속생성` - 새로운 약속을 만듭니다.\n• `/내약속` - 내가 참여 중인 약속 목록을 확인합니다.\n• `/약속도움말` - 이 도움말을 표시합니다.",
           },
         },
         {
@@ -1229,143 +1281,6 @@ app.command("/약속도움말", async ({ command, ack, client, body }) => {
     })
   } catch (error) {
     console.error("도움말 표시 오류:", error)
-  }
-})
-
-// 약속 만들기 버튼 처리 추가
-app.action("start_create_event", async ({ body, ack, client }) => {
-  await ack()
-
-  try {
-    await client.chat.postMessage({
-      channel: body.user.id,
-      text: "약속 정보를 입력해주세요",
-      blocks: [
-        {
-          type: "section",
-          text: {
-            type: "mrkdwn",
-            text: "*약속 정보 입력*\n다음 형식으로 약속 정보를 입력해주세요:\n\n`제목: 팀 회의\n설명: 주간 회의\n시작일: 2023-12-01\n종료일: 2023-12-01`",
-          },
-        },
-      ],
-    })
-  } catch (error) {
-    console.error("약속 생성 안내 오류:", error)
-  }
-})
-
-// 메시지 이벤트 처리 추가 (DM으로 약속 정보 입력 받기)
-app.message(async ({ message, client }) => {
-  // DM 메시지만 처리
-  if (message.channel_type !== "im") return
-
-  const text = message.text
-
-  // 약속 정보 형식 확인
-  if (text.includes("제목:") && text.includes("시작일:")) {
-    try {
-      // 메시지에서 정보 추출
-      const titleMatch = text.match(/제목:\s*(.+)/)
-      const descMatch = text.match(/설명:\s*(.+)/)
-      const startMatch = text.match(/시작일:\s*(.+)/)
-      const endMatch = text.match(/종료일:\s*(.+)/)
-
-      if (!titleMatch || !startMatch || !endMatch) {
-        await client.chat.postMessage({
-          channel: message.channel,
-          text: "정보 형식이 올바르지 않습니다. 다시 입력해주세요.",
-        })
-        return
-      }
-
-      const title = titleMatch[1].trim()
-      const description = descMatch ? descMatch[1].trim() : ""
-      const startDate = startMatch[1].trim()
-      const endDate = endMatch[1].trim()
-
-      // 사용자 정보 가져오기
-      const creatorId = message.user
-      const userInfo = await client.users.info({ user: creatorId })
-      const creatorName = userInfo.user.real_name || userInfo.user.name
-
-      // 이벤트 ID 생성
-      const timestamp = Date.now()
-      const randomPart = Math.random().toString(36).substring(2, 8)
-      const eventId = `slack_e_${timestamp}_${randomPart}`
-
-      // 이벤트 데이터 생성
-      const eventData = {
-        title,
-        description,
-        startDate: new Date(startDate).toISOString(),
-        endDate: new Date(endDate).toISOString(),
-        creatorId,
-        creatorName,
-        createdAt: new Date().toISOString(),
-        platform: "slack",
-      }
-
-      // Redis에 이벤트 저장
-      const redis = require("@upstash/redis")
-      const redisClient = new redis.Redis({
-        url: process.env.UPSTASH_REDIS_URL,
-        token: process.env.UPSTASH_REDIS_TOKEN,
-      })
-
-      await redisClient.set(`event:${eventId}`, JSON.stringify(eventData))
-      await redisClient.sadd(`user_created:${creatorId}`, eventId)
-      await redisClient.sadd(`event:${eventId}:participants`, creatorId)
-
-      // 약속 생성 완료 메시지 전송
-      await client.chat.postMessage({
-        channel: message.channel,
-        text: `약속이 생성되었습니다! 🎉`,
-        blocks: [
-          {
-            type: "section",
-            text: {
-              type: "mrkdwn",
-              text: `*약속이 성공적으로 생성되었습니다!* 🎉\n*제목:* ${title}`,
-            },
-          },
-          {
-            type: "section",
-            fields: [
-              {
-                type: "mrkdwn",
-                text: `*시작일:* ${startDate}`,
-              },
-              {
-                type: "mrkdwn",
-                text: `*종료일:* ${endDate}`,
-              },
-            ],
-          },
-          {
-            type: "actions",
-            elements: [
-              {
-                type: "button",
-                text: {
-                  type: "plain_text",
-                  text: "참여자 초대하기",
-                },
-                action_id: "invite_participants",
-                value: eventId,
-              },
-            ],
-          },
-        ],
-      })
-    } catch (error) {
-      console.error("약속 생성 처리 오류:", error)
-
-      await client.chat.postMessage({
-        channel: message.channel,
-        text: "약속 생성 중 오류가 발생했습니다. 다시 시도해주세요.",
-      })
-    }
   }
 })
 

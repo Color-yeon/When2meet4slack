@@ -2,11 +2,12 @@
 
 import { useState, useEffect, useCallback, useMemo } from "react"
 import { isValid } from "date-fns"
-import { useRouter, usePathname } from "next/navigation"
+import { useRouter, usePathname, useParams } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { useAuth } from "@/components/auth-provider"
-import { Edit, Share, Loader2, RefreshCcw, AlertTriangle } from "lucide-react"
+import { Edit, Share, Loader2, RefreshCcw, AlertTriangle, Calendar, Users, ArrowLeft } from "lucide-react"
 import Link from "next/link"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 
 import { AvailabilityForm } from "@/components/availability-form"
 import { AvailabilitySummary } from "@/components/availability-summary"
@@ -65,8 +66,21 @@ const MAX_RETRY_COUNT = 3
 // 재시도 간격 (밀리초)
 const RETRY_DELAY = 2000
 
+// 로컬 스토리지에서 이벤트 데이터 가져오기
+const getLocalEvents = () => {
+  if (typeof window === "undefined") return []
+
+  try {
+    const events = localStorage.getItem("events")
+    return events ? JSON.parse(events) : []
+  } catch (error) {
+    console.error("로컬 스토리지에서 이벤트 가져오기 오류:", error)
+    return []
+  }
+}
+
 export default function EventPage({
-  params,
+  params: originalParams,
 }: {
   params: { id: string }
 }) {
@@ -85,6 +99,25 @@ export default function EventPage({
   const [connectionAttempts, setConnectionAttempts] = useState(0)
   const [loadingTimeout, setLoadingTimeout] = useState<NodeJS.Timeout | null>(null)
   const [isRedisError, setIsRedisError] = useState(false)
+
+  const params = useParams()
+  const eventId = params.id
+
+  const [localEvent, setLocalEvent] = useState(null)
+  const [isLocalLoading, setIsLocalLoading] = useState(true)
+
+  useEffect(() => {
+    // 로컬 스토리지에서 이벤트 데이터 로드
+    const loadEvent = () => {
+      setIsLocalLoading(true)
+      const events = getLocalEvents()
+      const foundEvent = events.find((e) => e.id === eventId)
+      setLocalEvent(foundEvent || null)
+      setIsLocalLoading(false)
+    }
+
+    loadEvent()
+  }, [eventId])
 
   // 로딩 타임아웃 설정 - 20초 후에도 로딩이 완료되지 않으면 오류 표시
   useEffect(() => {
@@ -108,7 +141,7 @@ export default function EventPage({
   // 이벤트 데이터 로드 함수
   const loadEventData = useCallback(
     async (currentRetry = 0) => {
-      if (!params.id) return
+      if (!originalParams.id) return
 
       try {
         setIsLoadingEvent(true)
@@ -124,7 +157,7 @@ export default function EventPage({
         try {
           // 이벤트 데이터와 가용성 데이터를 병렬로 요청
           const [eventResponse, availResponse] = await Promise.all([
-            fetch(`/api/events/${params.id}`, {
+            fetch(`/api/events/${originalParams.id}`, {
               cache: "no-store",
               signal: controller.signal,
               headers: {
@@ -132,7 +165,7 @@ export default function EventPage({
                 "Cache-Control": "no-cache",
               },
             }),
-            fetch(`/api/events/${params.id}/availabilities`, {
+            fetch(`/api/events/${originalParams.id}/availabilities`, {
               cache: "no-store",
               signal: controller.signal,
             }),
@@ -149,7 +182,7 @@ export default function EventPage({
           const eventResult = await eventResponse.json()
 
           if (!eventResult.data) {
-            setError(`이벤트를 찾을 수 없습니다 (ID: ${params.id})`)
+            setError(`이벤트를 찾을 수 없습니다 (ID: ${originalParams.id})`)
             setIsLoadingEvent(false)
             return
           }
@@ -191,7 +224,7 @@ export default function EventPage({
         setIsLoadingEvent(false)
       }
     },
-    [params.id],
+    [originalParams.id],
   )
 
   // loadAvailabilities 함수 제거 (병렬 처리로 통합)
@@ -205,15 +238,15 @@ export default function EventPage({
     }
 
     // "new"는 유효한 이벤트 ID가 아님
-    if (params.id === "new") {
+    if (originalParams.id === "new") {
       router.push("/events/new")
       return
     }
-  }, [pathname, params.id, router])
+  }, [pathname, originalParams.id, router])
 
   // 이벤트 데이터 로드
   useEffect(() => {
-    if (params.id && params.id !== "new") {
+    if (originalParams.id && originalParams.id !== "new") {
       loadEventData()
     }
 
@@ -223,7 +256,7 @@ export default function EventPage({
         clearTimeout(loadingTimeout)
       }
     }
-  }, [params.id, retryCount, loadEventData, loadingTimeout])
+  }, [originalParams.id, retryCount, loadEventData, loadingTimeout])
 
   // 로그인 후 사용자를 약속 참여자로 추가 - 최적화: 불필요한 API 호출 방지
   useEffect(() => {
@@ -238,7 +271,7 @@ export default function EventPage({
         try {
           setIsAddingUserToEvent(true)
 
-          const response = await fetch(`/api/events/${params.id}/join`, {
+          const response = await fetch(`/api/events/${originalParams.id}/join`, {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
@@ -278,7 +311,7 @@ export default function EventPage({
       isMounted = false
       if (timer) clearTimeout(timer)
     }
-  }, [user, event, userAddedToEvent, isAddingUserToEvent, params.id])
+  }, [user, event, userAddedToEvent, isAddingUserToEvent, originalParams.id])
 
   // 메모이제이션을 통한 불필요한 계산 방지
   const isCreator = useMemo(() => {
@@ -288,7 +321,7 @@ export default function EventPage({
   const copyShareLink = () => {
     if (typeof window !== "undefined") {
       try {
-        const url = `${window.location.origin}/events/${params.id}`
+        const url = `${window.location.origin}/events/${originalParams.id}`
         navigator.clipboard.writeText(url)
         setIsCopied(true)
         toast({
@@ -370,7 +403,7 @@ export default function EventPage({
     }
   }
 
-  if (isAuthLoading || isLoadingEvent) {
+  if (isAuthLoading || isLoadingEvent || isLocalLoading) {
     return (
       <div className="mx-auto py-6 sm:py-12 flex flex-col items-center justify-center">
         <Loader2 className="h-8 w-8 animate-spin mb-4" />
@@ -441,21 +474,20 @@ export default function EventPage({
     )
   }
 
-  if (!event) {
+  if (!event && !localEvent) {
     return (
-      <div className="mx-auto py-6 sm:py-12">
-        <div className="max-w-md mx-auto text-center">
-          <h1 className="text-2xl font-bold mb-4">이벤트를 찾을 수 없습니다</h1>
-          <p className="text-muted-foreground mb-6">요청하신 이벤트가 존재하지 않거나 삭제되었을 수 있습니다.</p>
-          <div className="flex flex-col sm:flex-row gap-4 justify-center">
-            <Button onClick={goToDashboard} type="button">
-              대시보드로 돌아가기
-            </Button>
-            <Button variant="default" onClick={createNewEvent} type="button">
-              새 약속 만들기
-            </Button>
-          </div>
-        </div>
+      <div className="container mx-auto p-4">
+        <Card>
+          <CardContent className="pt-6">
+            <p className="text-center text-gray-500">이벤트를 찾을 수 없습니다.</p>
+            <div className="flex justify-center mt-4">
+              <Button onClick={() => router.push("/dashboard")}>
+                <ArrowLeft className="mr-2 h-4 w-4" />
+                대시보드로 돌아가기
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
       </div>
     )
   }
@@ -465,19 +497,71 @@ export default function EventPage({
     return (
       <div className="mx-auto py-6 sm:py-12">
         <div className="max-w-md mx-auto">
-          <EventDetails event={event} />
+          <EventDetails event={event || localEvent} />
 
           <div className="mt-8 text-center">
             <h2 className="text-xl font-bold mb-4">약속에 참여하려면 로그인이 필요합니다</h2>
             <p className="text-muted-foreground mb-6">로그인하시면 자동으로 이 약속에 참여자로 추가됩니다.</p>
             <Link
-              href={`/login?redirect=/events/${params.id}`}
+              href={`/login?redirect=/events/${originalParams.id}`}
               className="flex items-center justify-center w-full py-2 px-4 bg-primary text-primary-foreground rounded-md"
             >
               로그인 페이지로 이동
             </Link>
           </div>
         </div>
+      </div>
+    )
+  }
+
+  if (localEvent) {
+    return (
+      <div className="container mx-auto p-4">
+        <Button variant="ghost" className="mb-4" onClick={() => router.push("/dashboard")}>
+          <ArrowLeft className="mr-2 h-4 w-4" />
+          대시보드로 돌아가기
+        </Button>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-2xl">{localEvent.title}</CardTitle>
+            <CardDescription>
+              {new Date(localEvent.date).toLocaleDateString("ko-KR", {
+                year: "numeric",
+                month: "long",
+                day: "numeric",
+                weekday: "long",
+              })}
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-4">
+              <p>{localEvent.description || "설명 없음"}</p>
+
+              <div className="flex items-center gap-2">
+                <Calendar className="h-5 w-5 text-muted-foreground" />
+                <span>
+                  {new Date(localEvent.date).toLocaleTimeString("ko-KR", {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  })}
+                </span>
+              </div>
+
+              <div className="flex items-start gap-2">
+                <Users className="h-5 w-5 text-muted-foreground mt-1" />
+                <div>
+                  <p className="font-medium">참여자</p>
+                  <ul className="list-disc list-inside text-sm text-muted-foreground">
+                    {localEvent.participants?.map((participant, index) => <li key={index}>{participant}</li>) || (
+                      <li>참여자 없음</li>
+                    )}
+                  </ul>
+                </div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
       </div>
     )
   }
@@ -498,14 +582,14 @@ export default function EventPage({
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => router.push(`/events/${params.id}/edit`)}
+                onClick={() => router.push(`/events/${originalParams.id}/edit`)}
                 className="w-24"
                 type="button"
               >
                 <Edit className="h-4 w-4 mr-2" />
                 편집
               </Button>
-              <DeleteButton eventId={params.id} className="w-24" />
+              <DeleteButton eventId={originalParams.id} className="w-24" />
             </>
           )}
         </div>
