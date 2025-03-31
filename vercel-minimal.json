@@ -2,14 +2,14 @@
   "version": 2,
   "builds": [
     {
-      "src": "improved-server.js",
+      "src": "minimal-server.js",
       "use": "@vercel/node"
     }
   ],
   "routes": [
     {
       "src": "/(.*)",
-      "dest": "/improved-server.js"
+      "dest": "/minimal-server.js"
     }
   ]
 }
